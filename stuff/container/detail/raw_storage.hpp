@@ -46,14 +46,14 @@ class arrays<Allocator, T, Ts...> {
     arrays<Allocator, Ts...> tail_;
 
 public:
+    // clang-format off
     // Exception safety:
     void allocate(std::size_t capacity, const Allocator& alloc) {
         t_allocator t_alloc{alloc};
         head_ = t_alloc.allocate(capacity);
-        if
-            constexpr(std::is_same<T, zeroable<t_stripped>>::value) {
-                std::memset(static_cast<void*>(head_), 0, capacity * sizeof(t_stripped));
-            }
+        if constexpr(std::is_same<T, zeroable<t_stripped>>::value) {
+            std::memset(static_cast<void*>(head_), 0, capacity * sizeof(t_stripped));
+        }
 
         try {
             tail_.allocate(capacity, alloc);
@@ -61,6 +61,7 @@ public:
             throw;
         }
     }
+    // clang-format on
 
     void deallocate(std::size_t capacity, const Allocator& alloc) {
         t_allocator t_alloc{alloc};
@@ -68,26 +69,45 @@ public:
         tail_.deallocate(capacity, alloc);
     }
 
+    // clang-format off
     template <size_t n>
-    std::add_lvalue_reference_t<meta::nth_t<n, t_stripped, strip_zeroable_t<Ts>...>> get(
-        std::size_t pos) noexcept {
-        if
-            constexpr(n == 0) { return head_[pos]; }
-        else {
+    std::add_lvalue_reference_t<meta::nth_t<n, t_stripped, strip_zeroable_t<Ts>...>>
+    get(std::size_t pos) noexcept {
+        if constexpr(n == 0) {
+            return head_[pos];
+        } else {
             return tail_.template get<n - 1>(pos);
         }
     }
 
     template <size_t n>
-    std::add_const_t<
-        std::add_lvalue_reference_t<meta::nth_t<n, t_stripped, strip_zeroable_t<Ts>...>>>
+    std::add_const_t<std::add_lvalue_reference_t<meta::nth_t<n, t_stripped, strip_zeroable_t<Ts>...>>>
     get(std::size_t pos) const noexcept {
-        if
-            constexpr(n == 0) { return head_[pos]; }
-        else {
+        if constexpr(n == 0) {
+            return head_[pos];
+        } else {
             return tail_.template get<n - 1>(pos);
         }
     }
+
+    template <size_t n, typename... Args>
+    void construct(std::size_t pos, Allocator& alloc, Args&&... args) {
+        if constexpr(n == 0) {
+            std::allocator_traits<t_allocator>::construct(alloc, &head_[pos], std::forward<Args>(args)...);
+        } else {
+            tail_.template construct<n - 1>(pos, alloc, std::forward<Args>(args)...);
+        }
+    }
+
+    template <size_t n>
+    void destroy(std::size_t pos, Allocator& alloc) {
+        if constexpr(n == 0) {
+            std::allocator_traits<t_allocator>::destroy(alloc, &head_[pos]);
+        } else {
+            tail_.template destroy<n - 1>(pos, alloc);
+        }
+    }
+    // clang-format on
 };
 
 template <typename Allocator, typename... Ts>
@@ -127,6 +147,7 @@ public:
 
     std::size_t capacity() const noexcept { return capacity_; }
 
+    Allocator& allocator() { return alloc_; }
     const Allocator& allocator() const { return alloc_; }
 
     // clang-format off
@@ -155,16 +176,14 @@ public:
     void construct(std::size_t pos, Args&&... args) {
         STUFF_ASSERT(pos < capacity_);
 
-        using U = meta::nth_t<n, Ts...>;
-        new (&data_.template get<n>(pos)) U(std::forward<Args>(args)...);
+        data_.template construct<n>(pos, alloc_, std::forward<Args>(args)...);
     }
 
     template <std::size_t n>
     void destroy(std::size_t pos) {
         STUFF_ASSERT(pos < capacity_);
 
-        using U = meta::nth_t<n, Ts...>;
-        data_.template get<n>(pos).~U();
+        data_.template destroy<n>(pos, alloc_);
     }
 };
 

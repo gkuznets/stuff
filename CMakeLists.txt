@@ -21,6 +21,9 @@ add_test(hash_set container__hash_set__test)
 add_executable(meta__named_template_params__test test/meta/named_template_params.cpp)
 add_test(named_template_params meta__named_template_params__test)
 
+add_executable(meta__nth__test test/meta/nth.cpp)
+add_test(nth meta__nth__test)
+
 # Documentation
 include(doc/doc.cmake)
 

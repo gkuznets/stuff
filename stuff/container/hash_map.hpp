@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 
 #include <stuff/container/detail/robin_hood_storage.hpp>
@@ -45,16 +46,22 @@ class hash_map {
         }
     };
 
-    using storage = detail::robin_hood_storage<std::pair<Key, Value>, key_value_hash,
+    using storage = detail::robin_hood_storage<Key, std::pair<Key, Value>, key_value_hash,
                                                key_value_equal, Allocator, Params...>;
     storage storage_;
 
 public:
     using key_type = Key;
-    using value_type = std::pair<Key, Value>;
+    using mapped_type = Value;
+    using value_type = std::pair<const Key, Value>;
     using size_type = std::size_t;
+    using hasher = Hash;
+    using key_equal = Equal;
+    using allocator_type = Allocator;
+    using reference = value_type&;
+    using const_reference = const value_type&;
     using iterator = typename storage::iterator;
-    using const_iterator = iterator;
+    using const_iterator = typename storage::const_iterator;
 
     hash_map() = default;
     hash_map(const hash_map&) = default;
@@ -103,6 +110,20 @@ public:
         storage_.insert(values.begin(), values.end());
     }
 
+    template <typename V>
+    std::pair<iterator, bool> insert_or_assign(const key_type& key, V&& value) {
+        auto ret = insert(value_type{key, std::forward<V>(value)});
+        if (!ret.second) {
+            ret.first.second = std::forward<V>(value);
+        }
+        return ret;
+    }
+
+    template <class... Args>
+    std::pair<iterator, bool> try_emplace(const key_type& key, Args&&... args) {
+        return storage_.emplace(key, std::forward<Args>(args)...);
+    }
+
     iterator erase(const_iterator pos) { return storage_.erase(pos); }
 
     iterator erase(const_iterator first, const_iterator last) {
@@ -110,6 +131,26 @@ public:
     }
 
     size_type erase(const key_type& key) { return storage_.erase(key); }
+
+    mapped_type& at(const key_type& key) {
+        const auto it = storage_.find(key);
+        if (it != end()) {
+            return it->second;
+        }
+        throw std::out_of_range{"key not found"};
+    }
+
+    const mapped_type& at(const key_type& key) const {
+        const auto it = storage_.find(key);
+        if (it != end()) {
+            return it->second;
+        }
+        throw std::out_of_range{"key not found"};
+    }
+
+    mapped_type& operator[] (const key_type& key) {
+        return try_emplace(key).first->second;
+    }
 
     size_type count(const key_type& key) const noexcept(noexcept(storage_.count(key))) {
         return storage_.count(key);
@@ -126,6 +167,25 @@ public:
 
     std::size_t capacity() const noexcept { return storage_.capacity(); }
 };
+
+template <typename... Ts>
+bool operator==(const hash_map<Ts...>& l, const hash_map<Ts...>& r) {
+    if (l.size() != r.size()) {
+        return false;
+    }
+    for (const auto& x : l) {
+        const auto it = r.find(x.first);
+        if (it == r.end() || it->second != x.first) {
+            return false;
+        }
+    }
+    return true;
+}
+
+template <typename... Ts>
+bool operator!=(const hash_map<Ts...>& l, const hash_map<Ts...>& r) {
+    return !(l == r);
+}
 
 }  // namespace detail
 

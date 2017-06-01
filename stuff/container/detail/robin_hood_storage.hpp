@@ -15,6 +15,7 @@
 #include <stuff/container/detail/raw_storage.hpp>
 #include <stuff/container/selectors.hpp>
 #include <stuff/meta/named_template_params.hpp>
+#include <stuff/meta/nth.hpp>
 
 namespace stuff::container::detail {
 
@@ -43,7 +44,7 @@ struct bucket_metadata {
     static bucket_metadata vacant() { return {0, 0, deleted::NO}; }
 };
 
-template <typename T, typename Hash, typename Equal, typename Allocator,
+template <typename Key, typename T, typename Hash, typename Equal, typename Allocator,
           typename... Params>
 class robin_hood_storage {
     using growth_policy = weird_powers_of_two_growth_policy;
@@ -66,28 +67,43 @@ class robin_hood_storage {
     Equal equal_;
     std::size_t size_ = 0;
 
-public:
-    struct iterator
-        : public boost::iterator_facade<iterator, const T, boost::forward_traversal_tag> {
-        iterator(const iterator&) = default;
-        iterator(iterator&&) = default;
+    struct adjust_iterator_position {};
 
-        iterator& operator=(const iterator&) = default;
-        iterator& operator=(iterator&&) = default;
+    template <bool constant>
+    struct base_iterator
+        : public boost::iterator_facade<base_iterator<constant>,
+                                        std::conditional_t<constant, const T, T>,
+                                        boost::forward_traversal_tag> {
+        base_iterator(const base_iterator&) = default;
+        base_iterator(base_iterator&&) = default;
+
+        base_iterator& operator=(const base_iterator&) = default;
+        base_iterator& operator=(base_iterator&&) noexcept = default;
 
     private:
-        std::size_t pos_;
-        const robin_hood_storage* parent_;
+        using parent_type =
+            std::conditional_t<constant, const robin_hood_storage*, robin_hood_storage*>;
+        std::size_t pos_ = 0;
+        parent_type parent_ = nullptr;
 
         friend class robin_hood_storage;
         friend class boost::iterator_core_access;
 
-        iterator(std::size_t pos, const robin_hood_storage* parent)
-            : pos_(pos), parent_(parent) {}
+        base_iterator(std::size_t pos, parent_type parent) : pos_(pos), parent_(parent) {}
 
-        const T& dereference() const noexcept { return parent_->value_at(pos_); }
+        base_iterator(std::size_t pos, parent_type parent, adjust_iterator_position)
+            : pos_(pos), parent_(parent) {
+            if (pos_ != parent->capacity() &&
+                (parent_->vacant_at(pos) || parent_->deleted_at(pos))) {
+                increment();
+            }
+        }
 
-        bool equal(const iterator& other) const noexcept {
+        std::conditional_t<constant, const T, T>& dereference() const noexcept {
+            return parent_->value_at(pos_);
+        }
+
+        bool equal(const base_iterator& other) const noexcept {
             return pos_ == other.pos_ && parent_ == other.parent_;
         }
 
@@ -102,9 +118,56 @@ public:
         }
     };
 
-    iterator iterator_for(std::size_t pos) const noexcept { return iterator{pos, this}; }
+public:
+    using iterator = base_iterator<false>;
+
+    class const_iterator : public base_iterator<true> {
+    public:
+        const_iterator(const const_iterator&) = default;
+        const_iterator(const_iterator&&) = default;
+        const_iterator(const iterator& other)
+            : const_iterator(other.pos_, other.parent_) {}
+
+        const_iterator& operator=(const const_iterator&) noexcept = default;
+        const_iterator& operator=(const_iterator&&) noexcept = default;
+        const_iterator& operator=(const iterator& other) noexcept {
+            return *this = const_iterator{other.pos_, other.parent_};
+        }
+
+        friend bool operator==(const const_iterator& l, const iterator& r) {
+            return l.pos_ == r.pos_ && l.parent_ == r.parent_;
+        }
+        friend bool operator==(const iterator& l, const const_iterator& r) {
+            return r == l;
+        }
+        friend bool operator!=(const const_iterator& l, const iterator& r) {
+            return !(l == r);
+        }
+        friend bool operator!=(const iterator& l, const const_iterator& r) {
+            return !(r == l);
+        }
+
+    private:
+        friend class robin_hood_storage;
+
+        const_iterator(std::size_t pos, const robin_hood_storage* parent)
+            : base_iterator<true>(pos, parent) {}
+
+        const_iterator(std::size_t pos, const robin_hood_storage* parent,
+                       adjust_iterator_position)
+            : base_iterator<true>(pos, parent, adjust_iterator_position{}) {}
+    };
 
 private:
+    iterator iterator_for(std::size_t pos) noexcept { return iterator{pos, this}; }
+    iterator to_iterator(const const_iterator& it) noexcept {
+        return iterator{it.pos_, this};
+    }
+
+    const_iterator iterator_for(std::size_t pos) const noexcept {
+        return const_iterator{pos, this};
+    }
+
     metadata& metadata_at(std::size_t pos) noexcept {
         return raw_storage_.template get<0>(pos);
     }
@@ -145,6 +208,7 @@ private:
         return static_cast<hash_type>(h);
     }
 
+    // clang-format off
     void grow() {
         const uint64_t growth_factor = 2;
         const auto old_capacity = raw_storage_.capacity();
@@ -159,91 +223,118 @@ private:
             const auto& old_metadata = old_raw_storage.template get<0>(pos);
             if (*reinterpret_cast<const std::uint64_t*>(&old_metadata) != 0 &&
                 old_metadata.deleted == metadata::deleted::NO) {
-                auto& old_value = old_raw_storage.template get<1>(pos);
-                if
-                    constexpr(store_hash_) {
-                        insert_impl(std::move(old_value),
-                                    old_raw_storage.template get<2>(pos));
-                    }
-                else {
-                    insert_impl(std::move(old_value));
+                auto& value = old_raw_storage.template get<1>(pos);
+                if constexpr(store_hash_) {
+                    const auto hash = old_raw_storage.template get<2>(pos);
+                    insert_with_hash(hash, std::move(value));
+                } else {
+                    insert_impl(std::move(value));
                 }
             }
         }
     }
 
-    void put(std::size_t pos, T&& value, hash_type hash, std::uint64_t distance) {
+    template <typename... Args>
+    void put(std::size_t pos, hash_type hash, std::uint64_t distance, Args&&... args) {
         if (vacant_at(pos) || deleted_at(pos)) {
-            raw_storage_.template construct<1>(pos, std::move(value));
+            raw_storage_.template construct<1>(pos, std::forward<Args>(args)...);
         } else {
-            value_at(pos) = value;
+            if constexpr(sizeof...(Args) == 1 && std::is_same<meta::nth_t<0, Args...>, T>::value &&
+                    std::is_move_assignable<T>::value) {
+                value_at(pos) = std::move(args...);
+            } else {
+                raw_storage_.template destroy<1>(pos);
+                raw_storage_.template construct<1>(pos, std::forward<Args>(args)...);
+            }
         }
         metadata_at(pos).distance = distance;
         metadata_at(pos).deleted = metadata::deleted::NO;
-        if
-            constexpr(store_hash_) { hash_at(pos) = hash; }
+        if constexpr(store_hash_) { hash_at(pos) = hash; }
+    }
+    // clang-format on
+
+    template <typename... Args>
+    std::pair<iterator, bool> insert_with_key(const Key& key, Args&&... args) {
+        const auto hash = folded_hash(key);
+        // Creating copy of value only if necessary
+        auto pos_for_hash = position_for_hash(hash);
+        const auto[actual_pos, distance, should_insert] =
+            find_insertion_position(pos_for_hash, key);
+        if (should_insert) {
+            put(actual_pos, hash, distance, std::forward<Args>(args)...);
+            ++size_;
+            ++metadata_at(pos_for_hash).size;
+        }
+        return {iterator_for(actual_pos), should_insert};
     }
 
     template <typename Value>
     std::pair<iterator, bool> insert_impl(Value&& value) {
         const auto hash = folded_hash(value);
         // Creating copy of value only if necessary
-        return insert_impl(std::forward<Value>(value), hash);
+        // return insert_with_hash(hash, std::forward<Value>(value));
+        auto pos_for_hash = position_for_hash(hash);
+        const auto[actual_pos, distance, should_insert] =
+            find_insertion_position(pos_for_hash, value);
+        if (should_insert) {
+            put(actual_pos, hash, distance, std::forward<Value>(value));
+            ++size_;
+            ++metadata_at(pos_for_hash).size;
+        }
+        return {iterator_for(actual_pos), should_insert};
     }
 
-    std::pair<iterator, bool> insert_impl(T&& value, hash_type hash) {
-        auto pos = position_for_hash(hash);
-        auto& bkt_metadata = metadata_at(pos);
+    template <typename K>
+    std::tuple<std::size_t, std::uint64_t, bool> find_insertion_position(std::size_t pos,
+                                                                         const K& key) {
         std::uint64_t distance = 0;
-
         while (true) {
             if (vacant_at(pos)) {
-                put(pos, std::move(value), hash, distance);
-                ++size_;
-                ++bkt_metadata.size;
-                return {iterator_for(pos), true};
+                return {pos, distance, true};
             }
 
             const bool deleted_at_pos = deleted_at(pos);
-            if (!deleted_at_pos && equal_(value_at(pos), value)) {
-                return {iterator_for(pos), false};
+            if (!deleted_at_pos && equal_(key, value_at(pos))) {
+                return {pos, distance, false};
             }
 
             const auto distance_at_pos = distance_at(pos);
             if (distance_at_pos < distance) {
                 if (!deleted_at_pos) {
-                    T old_value{std::move(value_at(pos))};
-                    hash_type old_hash{hash_at(pos)};
-                    put(pos, std::move(value), hash, distance);
-                    continue_insertion(std::move(old_value), old_hash, next_position(pos),
-                                       distance_at_pos + 1);
-                } else {
-                    put(pos, std::move(value), hash, distance);
+                    if
+                        constexpr(store_hash_) {
+                            continue_insertion(std::move(value_at(pos)), hash_at(pos),
+                                               next_position(pos), distance_at_pos + 1);
+                        }
+                    else {
+                        continue_insertion(std::move(value_at(pos)), hash_type{},
+                                           next_position(pos), distance_at_pos + 1);
+                    }
                 }
-                ++size_;
-                ++bkt_metadata.size;
-                return {iterator_for(pos), true};
+                return {pos, distance, true};
             }
+
             ++distance;
             pos = next_position(pos);
         }
     }
 
-    std::pair<iterator, bool> insert_impl(const T& value, hash_type hash) {
+    template <typename U>
+    std::pair<iterator, bool> insert_with_hash(hash_type hash, U&& u) {
         auto pos = position_for_hash(hash);
         auto& bkt_metadata = metadata_at(pos);
         std::uint64_t distance = 0;
 
         while (true) {
             if (vacant_at(pos)) {
-                put(pos, T(value), hash, distance);
+                put(pos, hash, distance, std::forward<U>(u));
                 ++size_;
                 ++bkt_metadata.size;
                 return {iterator_for(pos), true};
             }
 
             const bool deleted_at_pos = deleted_at(pos);
-            if (!deleted_at_pos && equal_(value_at(pos), value)) {
+            if (!deleted_at_pos && equal_(value_at(pos), u)) {
                 return {iterator_for(pos), false};
             }
 
@@ -254,18 +345,18 @@ private:
                         constexpr(store_hash_) {
                             T old_value{std::move(value_at(pos))};
                             hash_type old_hash{hash_at(pos)};
-                            put(pos, T(value), hash, distance);
+                            put(pos, hash, distance, std::forward<U>(u));
                             continue_insertion(std::move(old_value), old_hash,
                                                next_position(pos), distance_at_pos + 1);
                         }
                     else {
                         T old_value{std::move(value_at(pos))};
-                        put(pos, T(value), hash, distance);
-                        continue_insertion(std::move(old_value), hash,
-                                           next_position(pos), distance_at_pos + 1);
+                        put(pos, hash, distance, std::forward<U>(u));
+                        continue_insertion(std::move(old_value), hash, next_position(pos),
+                                           distance_at_pos + 1);
                     }
                 } else {
-                    put(pos, T(value), hash, distance);
+                    put(pos, hash, distance, std::forward<U>(u));
                 }
                 ++size_;
                 ++bkt_metadata.size;
@@ -280,27 +371,36 @@ private:
                             std::uint64_t distance) {
         while (true) {
             if (vacant_at(pos)) {
-                put(pos, std::move(value), hash, distance);
+                put(pos, hash, distance, std::move(value));
                 return;
             }
 
             const auto distance_at_pos = distance_at(pos);
             if (distance_at_pos < distance) {
                 if (deleted_at(pos)) {
-                    put(pos, std::move(value), hash, distance);
+                    put(pos, hash, distance, std::move(value));
                     return;
                 }
                 if
                     constexpr(store_hash_) {
                         T old_value{value_at(pos)};
                         hash_type old_hash{hash_at(pos)};
-                        put(pos, std::move(value), hash, distance);
+                        put(pos, hash, distance, std::move(value));
                         hash = old_hash;
-                        value = old_value;
+                        if
+                            constexpr(std::is_move_assignable<T>::value) {
+                                value = std::move(old_value);
+                            }
+                        else {
+                            std::allocator_traits<Allocator>::destroy(
+                                raw_storage_.allocator(), &value);
+                            std::allocator_traits<Allocator>::construct(
+                                raw_storage_.allocator(), &value, std::move(old_value));
+                        }
                     }
                 else {
                     T old_value{std::move(value_at(pos))};
-                    put(pos, std::move(value), hash, distance);
+                    put(pos, hash, distance, std::move(value));
                     value = std::move(old_value);
                 }
                 distance = distance_at_pos;
@@ -316,7 +416,6 @@ private:
     }
 
     std::size_t position_for_hash(hash_type h) const noexcept { return to_position_(h); }
-
 
     template <typename V>
     std::size_t search(const V& value) const
@@ -402,9 +501,7 @@ public:
         }
     }
 
-    ~robin_hood_storage() {
-        clear();
-    }
+    ~robin_hood_storage() { clear(); }
 
     robin_hood_storage& operator=(const robin_hood_storage& other) {
         robin_hood_storage other_copy{other.begin(), other.end(), hash_, equal_,
@@ -414,33 +511,29 @@ public:
     }
     robin_hood_storage& operator=(robin_hood_storage&&) = default;
 
-    iterator begin() const noexcept {
-        std::size_t pos = 0;
-        for (; pos < capacity(); ++pos) {
-            if (!vacant_at(pos) && !deleted_at(pos)) {
-                break;
-            }
-        }
-        return iterator_for(pos);
+    iterator begin() noexcept { return iterator{0, this, adjust_iterator_position{}}; }
+    const_iterator begin() const noexcept {
+        return const_iterator{0, this, adjust_iterator_position{}};
     }
 
-    iterator end() const noexcept { return iterator_for(capacity()); }
+    iterator end() noexcept { return iterator_for(capacity()); }
+    const_iterator end() const noexcept { return iterator_for(capacity()); }
 
     std::size_t capacity() const noexcept { return raw_storage_.capacity(); }
 
     bool empty() const noexcept { return size_ == 0; }
 
-    iterator erase(iterator it) {
+    iterator erase(const_iterator it) {
         STUFF_ASSERT(it.parent_ == this);
         STUFF_ASSERT(it.pos_ <= capacity());
         STUFF_ASSERT(!vacant_at(it.pos_) && !deleted_at(it.pos_));
 
-        auto result = std::next(it);
+        const auto result = std::next(it);
         erase_at(it.pos_);
-        return result;
+        return to_iterator(result);
     }
 
-    void quick_erase(iterator it) {
+    void quick_erase(const_iterator it) {
         STUFF_ASSERT(it.parent_ == this);
         STUFF_ASSERT(it.pos_ <= capacity());
         STUFF_ASSERT(!vacant_at(it.pos_) && !deleted_at(it.pos_));
@@ -448,7 +541,7 @@ public:
         erase_at(it.pos_);
     }
 
-    iterator erase(iterator first, iterator last) {
+    iterator erase(const_iterator first, const_iterator last) {
         STUFF_ASSERT(first.parent_ == this);
         STUFF_ASSERT(last.parent_ == this);
         STUFF_ASSERT(first.pos_ <= last.pos_);
@@ -459,7 +552,7 @@ public:
         for (; first != last; ++first) {
             erase_at(first.pos_);
         }
-        return last;
+        return to_iterator(last);
     }
 
     template <typename V>
@@ -489,7 +582,13 @@ public:
         size_ = 0;
     }
 
-    std::pair<iterator, bool> insert(T value) { return emplace(std::move(value)); }
+    template <typename Value>
+    std::pair<iterator, bool> insert(Value&& value) {
+        if (10 * size() >= 8 * capacity()) {
+            grow();
+        }
+        return insert_impl(std::forward<Value>(value));
+    }
 
     template <typename InputIter>
     void insert(InputIter first, InputIter last) {
@@ -498,22 +597,30 @@ public:
         }
     }
 
+    // support for map
     template <typename... Args>
-    std::pair<iterator, bool> emplace(Args&&... args) {
+    std::pair<iterator, bool> emplace(const Key& key, Args&&... args) {
         if (10 * size() >= 8 * capacity()) {
             grow();
         }
-        return insert_impl(T{std::forward<Args>(args)...});
+        // Constructing mapped object from args only if necessary
+        return insert_with_key(key, std::piecewise_construct, std::forward_as_tuple(key),
+                               std::forward_as_tuple(std::forward<Args>(args)...));
     }
 
-    template <typename V>
-    std::size_t count(const V& value) const noexcept(noexcept(search(value))) {
-        return search(value) == capacity() ? 0 : 1;
+    template <typename K>
+    std::size_t count(const K& key) const noexcept(noexcept(search(key))) {
+        return search(key) == capacity() ? 0 : 1;
     }
 
-    template <typename V>
-    iterator find(const V& value) const noexcept(noexcept(search(value))) {
-        return iterator_for(search(value));
+    template <typename K>
+    const_iterator find(const K& key) const noexcept(noexcept(search(key))) {
+        return iterator_for(search(key));
+    }
+
+    template <typename K>
+    iterator find(const K& key) noexcept(noexcept(search(key))) {
+        return iterator_for(search(key));
     }
 };
 

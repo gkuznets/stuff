@@ -18,7 +18,7 @@ template <typename Key, typename Hash = std::hash<Key>,
           typename Equal = std::equal_to<Key>, typename Allocator = std::allocator<Key>,
           typename... Params>
 class hash_set {
-    using storage = detail::robin_hood_storage<Key, Hash, Equal, Allocator, Params...>;
+    using storage = detail::robin_hood_storage<Key, Key, Hash, Equal, Allocator, Params...>;
     storage storage_;
 
 public:
@@ -27,7 +27,10 @@ public:
     using size_type = std::size_t;
     using hasher = Hash;
     using key_equal = Equal;
-    using iterator = typename storage::iterator;
+    using allocator_type = Allocator;
+    using reference = value_type&;
+    using const_reference = const value_type&;
+    using iterator = typename storage::const_iterator;
     using const_iterator = iterator;
 
     hash_set() = default;
@@ -73,6 +76,10 @@ public:
         return storage_.insert(value);
     }
 
+    std::pair<iterator, bool> insert(value_type&& value) {
+        return storage_.insert(value);
+    }
+
     template <typename InputIter>
     void insert(InputIter first, InputIter last) {
         storage_.insert(first, last);
@@ -80,13 +87,6 @@ public:
 
     void insert(std::initializer_list<value_type> values) {
         storage_.insert(values.begin(), values.end());
-    }
-
-    template <typename... Args>
-    std::enable_if_t<std::is_constructible<value_type, Args...>::value,
-                     std::pair<iterator, bool>>
-    emplace(Args&&... args) {
-        return storage_.emplace(std::forward<Args>(args)...);
     }
 
     //! Removes the element pointed to by pos.
@@ -119,7 +119,8 @@ public:
         return storage_.count(value);
     }
 
-    const_iterator find(const Key& key) const noexcept(noexcept(storage_.find(key))) {
+    const_iterator find(const value_type& key) const
+        noexcept(noexcept(storage_.find(key))) {
         return storage_.find(key);
     }
 
@@ -127,6 +128,24 @@ public:
         return static_cast<double>(size()) / static_cast<double>(storage_.capacity());
     }
 };
+
+template <typename... Ts>
+bool operator==(const hash_set<Ts...>& l, const hash_set<Ts...>& r) {
+    if (l.size() != r.size()) {
+        return false;
+    }
+    for (const auto& x : l) {
+        if (r.count(x) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+template <typename... Ts>
+bool operator!=(const hash_set<Ts...>& l, const hash_set<Ts...>& r) {
+    return !(l == r);
+}
 
 }  // namespace detail
 

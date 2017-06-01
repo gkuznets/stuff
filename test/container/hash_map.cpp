@@ -8,6 +8,7 @@
 #include <vector>
 
 using namespace std::string_literals;
+namespace sc = stuff::container;
 
 BOOST_AUTO_TEST_CASE(hash_map_of_int_int__operator_copy) {
     stuff::container::hash_map<int, int> m1 = {{1, 10}, {2, 20}, {3, 30}};
@@ -141,6 +142,30 @@ BOOST_AUTO_TEST_CASE(hash_map_of_string_int__insert) {
     BOOST_CHECK_EQUAL(ret.first->second, 10);
 }
 
+struct counted_constructions {
+    static int constructions_count;
+
+    counted_constructions(int, int) {
+        ++constructions_count;
+    }
+    counted_constructions(const counted_constructions&) noexcept = default;
+    counted_constructions(counted_constructions&&) noexcept = default;
+    counted_constructions& operator=(const counted_constructions&) noexcept = default;
+    counted_constructions& operator=(counted_constructions&&) noexcept = default;
+};
+
+int counted_constructions::constructions_count = 0;
+
+BOOST_AUTO_TEST_CASE(hash_map_of_int_cc__try_emplace) {
+    sc::hash_map<int, counted_constructions> m;
+    auto ret = m.try_emplace(1, 10, 100);
+    BOOST_CHECK(ret.second);
+    BOOST_CHECK_EQUAL(counted_constructions::constructions_count, 1);
+    ret = m.try_emplace(1, 10, 100);
+    BOOST_CHECK(!ret.second);
+    BOOST_CHECK_EQUAL(counted_constructions::constructions_count, 1);
+}
+
 BOOST_AUTO_TEST_CASE(hash_map_of_int_int__erase_iter) {
     stuff::container::hash_map<int, int> m = {{1, 10}, {2, 20}, {3, 30}};
     auto remaining_elements = m.size();
@@ -209,6 +234,62 @@ BOOST_AUTO_TEST_CASE(hash_map_of_string_int__erase_value) {
     BOOST_CHECK_EQUAL(m.erase("0"s), 0);
     BOOST_CHECK_EQUAL(m.erase("1"s), 1);
     BOOST_CHECK_EQUAL(m.erase("1"s), 0);
+}
+
+BOOST_AUTO_TEST_CASE(hash_map_of_int_int__at) {
+    sc::hash_map<int, int> m;
+    BOOST_CHECK_THROW(m.at(1), std::out_of_range);
+
+    m.insert(std::make_pair(1, 10));
+    BOOST_CHECK_EQUAL(m.at(1), 10);
+
+    m.at(1) = 100;
+    BOOST_CHECK_EQUAL(m.at(1), 100);
+}
+
+BOOST_AUTO_TEST_CASE(hash_map_of_int_int__op_sq_brackets_with_const_key) {
+    sc::hash_map<int, int> m;
+    const int k1 = 1;
+    m[k1] = 10;
+    BOOST_CHECK_EQUAL(m[k1], 10);
+
+    const int k2 = 2;
+    BOOST_CHECK_EQUAL(m[k2], int{});
+}
+
+BOOST_AUTO_TEST_CASE(empty__hash_map_of_int_int__count) {
+    sc::hash_map<int, int> m;
+    BOOST_CHECK_EQUAL(m.count(1), 0);
+}
+
+BOOST_AUTO_TEST_CASE(empty__hash_map_of_string_int__count) {
+    sc::hash_map<std::string, int> m;
+    BOOST_CHECK_EQUAL(m.count("1"s), 0);
+}
+
+BOOST_AUTO_TEST_CASE(nonempty__hash_map_of_int_int__count) {
+    sc::hash_map<int, int> m = {{1, 10}, {2, 20}, {3, 30}, {4, 40}, {5, 50}};
+
+    BOOST_CHECK_EQUAL(m.count(0), 0);
+    BOOST_CHECK_EQUAL(m.count(1), 1);
+    BOOST_CHECK_EQUAL(m.count(2), 1);
+    BOOST_CHECK_EQUAL(m.count(3), 1);
+    BOOST_CHECK_EQUAL(m.count(4), 1);
+    BOOST_CHECK_EQUAL(m.count(5), 1);
+    BOOST_CHECK_EQUAL(m.count(6), 0);
+}
+
+BOOST_AUTO_TEST_CASE(nonempty__hash_map_of_string_int__count) {
+    sc::hash_map<std::string, int> m = {
+        {"1"s, 10}, {"2"s, 20}, {"3"s, 30}, {"4"s, 40}, {"5"s, 50}};
+
+    BOOST_CHECK_EQUAL(m.count("0"s), 0);
+    BOOST_CHECK_EQUAL(m.count("1"s), 1);
+    BOOST_CHECK_EQUAL(m.count("2"s), 1);
+    BOOST_CHECK_EQUAL(m.count("3"s), 1);
+    BOOST_CHECK_EQUAL(m.count("4"s), 1);
+    BOOST_CHECK_EQUAL(m.count("5"s), 1);
+    BOOST_CHECK_EQUAL(m.count("6"s), 0);
 }
 
 BOOST_AUTO_TEST_CASE(empty__hash_map_of_int_int__find) {

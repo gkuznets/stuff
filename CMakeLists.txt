@@ -14,15 +14,19 @@ enable_testing()
 
 add_executable(container__hash_map__test test/container/hash_map.cpp)
 add_test(hash_map container__hash_map__test)
+target_link_libraries(container__hash_map__test fmt)
 
 add_executable(container__hash_set__test test/container/hash_set.cpp)
 add_test(hash_set container__hash_set__test)
+target_link_libraries(container__hash_set__test fmt)
 
 add_executable(meta__named_template_params__test test/meta/named_template_params.cpp)
 add_test(named_template_params meta__named_template_params__test)
+target_link_libraries(meta__named_template_params__test fmt)
 
 add_executable(meta__nth__test test/meta/nth.cpp)
 add_test(nth meta__nth__test)
+target_link_libraries(meta__nth__test fmt)
 
 # Documentation
 include(doc/doc.cmake)

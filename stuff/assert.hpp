@@ -18,12 +18,9 @@ public:
 
 #ifdef STUFF_DEBUG
 
-#define STUFF_ASSERT(condition)             \
-    if (!(condition)) {                     \
-        STUFF_THROW(stuff::assertion_error, \
-                    "Assertion '"           \
-                    "##condition"           \
-                    "' failed")             \
+#define STUFF_ASSERT(condition)                                                  \
+    if (!(condition)) {                                                          \
+        STUFF_THROW(stuff::assertion_error, "Assertion '" #condition "' failed") \
     }
 
 #else  // #ifdef STUFF_DEBUG

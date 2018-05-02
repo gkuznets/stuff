@@ -4,10 +4,12 @@
 
 namespace stuff {
 
-class assertion_error : stuff::exception {
+class assertion_error : public stuff::exception {
 public:
-    assertion_error(std::string message, std::string filename, std::string function, int line)
-        :stuff::exception(std::move(message), std::move(filename), std::move(function), line) {}
+    assertion_error(std::string message, std::string filename, std::string function,
+                    int line)
+        : stuff::exception(std::move(message), std::move(filename), std::move(function),
+                           line) {}
 
     const char* name() const noexcept override { return "stuff::assertion_error"; }
 };

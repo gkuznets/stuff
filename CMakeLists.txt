@@ -20,6 +20,10 @@ add_executable(container__hash_set__test test/container/hash_set.cpp)
 add_test(hash_set container__hash_set__test)
 target_link_libraries(container__hash_set__test fmt)
 
+add_executable(container__small_vector__test test/container/small_vector.cpp)
+add_test(small_vector container__small_vector__test)
+target_link_libraries(container__small_vector__test fmt)
+
 add_executable(meta__named_template_params__test test/meta/named_template_params.cpp)
 add_test(named_template_params meta__named_template_params__test)
 target_link_libraries(meta__named_template_params__test fmt)

@@ -14,6 +14,12 @@ public:
     const char* name() const noexcept override { return "stuff::assertion_error"; }
 };
 
+class precondition_violation : public assertion_error {
+public:
+    using assertion_error::assertion_error;
+    const char* name() const noexcept override { return "stuff::precondition_violation"; }
+};
+
 }  // namespace stuff
 
 #ifdef STUFF_DEBUG
@@ -23,8 +29,15 @@ public:
         STUFF_THROW(stuff::assertion_error, "Assertion '" #condition "' failed") \
     }
 
+#define STUFF_CHECK_PRECONDITION(condition)                   \
+    if (!(condition)) {                                       \
+        STUFF_THROW(stuff::precondition_violation,            \
+                    "Precondition '" #condition "' violated") \
+    }
+
 #else  // #ifdef STUFF_DEBUG
 
 #define STUFF_ASSERT(condition) ((void)0)
+#define STUFF_CHECK_PRECONDITION(condition) ((void)0)
 
 #endif  // #ifdef STUFF_DEBUG

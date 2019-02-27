@@ -9,8 +9,19 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} ${CXX_FLAGS} -O3 -DNDEBUG")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+#message("*** ${CMAKE_CXX_COMPILER_ID}")
+#if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+   add_compile_options (-fdiagnostics-color=always)
+   #elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+   #add_compile_options (-fcolor-diagnostics)
+   #endif ()
+
 # Testing
 enable_testing()
+
+add_executable(container__adaptive_radix_tree__test test/container/adaptive_radix_tree.cpp)
+add_test(adaptive_radix_tree container__adaptive_radix_tree__test)
+target_link_libraries(container__adaptive_radix_tree__test fmt)
 
 add_executable(container__hash_map__test test/container/hash_map.cpp)
 add_test(hash_map container__hash_map__test)

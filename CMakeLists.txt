@@ -27,12 +27,16 @@ add_test(small_vector container__small_vector__test)
 target_link_libraries(container__small_vector__test ${LIBFMT_LIB})
 
 add_executable(meta__named_template_params__test test/meta/named_template_params.cpp)
-add_test(named_template_params meta__named_template_params__test)
+add_test(meta/named_template_params meta__named_template_params__test)
 target_link_libraries(meta__named_template_params__test ${LIBFMT_LIB})
 
 add_executable(meta__nth__test test/meta/nth.cpp)
-add_test(nth meta__nth__test)
+add_test(meta/nth meta__nth__test)
 target_link_libraries(meta__nth__test ${LIBFMT_LIB})
+
+add_executable(meta__range__test test/meta/range.cpp)
+add_test(meta/range meta__range__test)
+target_link_libraries(meta__range__test ${LIBFMT_LIB})
 
 # Documentation
 include(doc/doc.cmake)

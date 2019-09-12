@@ -26,6 +26,10 @@ add_executable(container__small_vector__test test/container/small_vector.cpp)
 add_test(small_vector container__small_vector__test)
 target_link_libraries(container__small_vector__test ${LIBFMT_LIB})
 
+add_executable(memory__shared_ptr__test test/memory/shared_ptr.cpp)
+add_test(memory/shared_ptr memory__shared_ptr__test)
+target_link_libraries(memory__shared_ptr__test ${LIBFMT_LIB})
+
 add_executable(meta__named_template_params__test test/meta/named_template_params.cpp)
 add_test(meta/named_template_params meta__named_template_params__test)
 target_link_libraries(meta__named_template_params__test ${LIBFMT_LIB})

@@ -14,6 +14,10 @@ find_library(LIBFMT_LIB fmt)
 # Testing
 enable_testing()
 
+add_executable(algorithm__string__splitting_view__test test/algorithm/string/splitting_view.cpp)
+add_test(splitting_view algorithm__string__splitting_view__test)
+target_link_libraries(algorithm__string__splitting_view__test ${LIBFMT_LIB})
+
 add_executable(container__hash_map__test test/container/hash_map.cpp)
 add_test(hash_map container__hash_map__test)
 target_link_libraries(container__hash_map__test ${LIBFMT_LIB})
